@@ -28,6 +28,8 @@ Copy these into your AI's instruction file.
 
 2. **If a command is blocked or rejected, never retry it.** It will fail again. Find another way immediately.
 
+   > **Example: Claude Code hooks.** If you use stop hooks (like secret scanning or destructive command blocking), the AI will retry the blocked command 68.9% of the time. Hooks are deterministic: if it blocked once, it blocks every time. Every retry is guaranteed to fail.
+
 3. **Before reading a file, verify it exists. Before editing a file, read it first.** This alone prevents 12% of all errors.
 
 4. **If a file is too large to read, don't retry.** Search for the specific content you need, or read a specific section using offset and limit.
