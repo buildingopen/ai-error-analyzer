@@ -50,9 +50,19 @@ Copy these into your AI's instruction file.
 
 Some categories improved dramatically. Overall recovery improved 34% relative. But the AI still retries 43% of the time. Instruction-level rules can't fully rewire model behavior.
 
-## The Data
+## Run Your Own Analysis
 
-These rules came from analyzing 5,890 errors across 2,068 AI coding sessions using [transcript-analyzer](https://github.com/buildingopen/transcript-analyzer).
+This repo includes `analyze.py`, the script that generated these findings. Point it at your Claude Code sessions and get your own error report.
+
+```bash
+git clone https://github.com/buildingopen/ai-error-rules.git
+cd ai-error-rules
+python3 analyze.py
+```
+
+It reads your session files from `~/.claude/projects/` and outputs a full error taxonomy with recovery rates, retry loops, and wasted tokens.
+
+## The Data
 
 | Finding | Number |
 |---------|--------|
