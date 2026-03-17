@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
-Error Taxonomy Analyzer for Claude Code conversation JSONL files.
+AI Error Analyzer - Analyze Claude Code session errors.
 
-Processes all sessions in ~/.claude/projects/ to build a complete taxonomy of errors,
-classify them, analyze sequences, and identify preventable patterns.
+Scans your Claude Code session files (~/.claude/projects/) and generates
+a detailed error taxonomy report: what errors happen, how often, whether
+the AI retries or switches approach, and what's preventable.
+
+Usage:
+    python3 analyze.py                         # Use default ~/.claude/projects/
+    python3 analyze.py --sessions-dir /path/   # Custom sessions directory
+    python3 analyze.py --output report.md      # Custom output file
+    python3 analyze.py --help                  # Show all options
 """
 
+import argparse
 import json
 import os
 import re
@@ -13,11 +21,6 @@ import glob
 from collections import defaultdict, Counter
 from pathlib import Path
 from datetime import datetime
-
-try:
-    from patterns.config import CLAUDE_PROJECTS_DIR, output_path as _output_path
-except ImportError:
-    from config import CLAUDE_PROJECTS_DIR, output_path as _output_path
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +72,7 @@ ERROR_CATEGORIES = {
         r"EACCES",
     ],
     "NETWORK_ERROR": [
-        r"(?<!\-)timeout(?![\s=]\d)",  # "timeout" but not "--timeout=60"
+        r"(?<!\-)timeout(?![\s=]\d)",
         r"ECONNREFUSED",
         r"ECONNRESET",
         r"fetch failed",
@@ -126,7 +129,6 @@ CATEGORY_ORDER = [
 
 def classify_error(text: str) -> str:
     """Classify an error message into a category."""
-    text_lower = text.lower()
     for category in CATEGORY_ORDER:
         if category == "UNKNOWN":
             continue
@@ -150,24 +152,6 @@ def extract_tool_name_from_assistant(uuid_to_msg: dict, source_uuid: str, tool_u
             if block.get("id") == tool_use_id:
                 return block.get("name")
     return None
-
-
-def get_next_assistant_tools(uuid_to_msg: dict, parent_chain: dict, error_uuid: str) -> list[str]:
-    """Find what tools the assistant used in its next response after an error."""
-    # Find messages whose parent is the error message
-    children = parent_chain.get(error_uuid, [])
-    tools = []
-    for child_uuid in children:
-        child_msg = uuid_to_msg.get(child_uuid)
-        if not child_msg:
-            continue
-        if child_msg.get("type") == "assistant":
-            content = child_msg.get("message", {}).get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        tools.append(block.get("name", "unknown"))
-    return tools
 
 
 def analyze_post_error_action(
@@ -207,7 +191,7 @@ def assess_preventability(category: str, error_text: str, tool_name: str | None)
         preventions.append("Checking before acting")
 
     if category == "HOOK_BLOCKED":
-        preventions.append("Better CLAUDE.md instructions")
+        preventions.append("Better instructions")
 
     if category == "COMMAND_FAILED":
         if "not found" in error_text.lower() or "unrecognized arguments" in error_text.lower():
@@ -216,7 +200,7 @@ def assess_preventability(category: str, error_text: str, tool_name: str | None)
             preventions.append("Better tool choice")
 
     if category == "PERMISSION_DENIED":
-        preventions.append("Better CLAUDE.md instructions")
+        preventions.append("Better instructions")
         preventions.append("Checking before acting")
 
     if category == "NETWORK_ERROR":
@@ -224,13 +208,13 @@ def assess_preventability(category: str, error_text: str, tool_name: str | None)
             preventions.append("Checking before acting")
 
     if category == "TOOL_NOT_FOUND":
-        preventions.append("Better CLAUDE.md instructions")
+        preventions.append("Better instructions")
 
     if category == "SIBLING_ERROR":
         preventions.append("Better tool choice")
 
     if category == "USER_REJECTED":
-        preventions.append("Better CLAUDE.md instructions")
+        preventions.append("Better instructions")
 
     return preventions if preventions else ["Not easily preventable"]
 
@@ -240,11 +224,11 @@ def process_session(filepath: str) -> dict:
     messages = []
     errors = []
     uuid_to_msg = {}
-    parent_chain = defaultdict(list)  # parent_uuid -> [child_uuids]
+    parent_chain = defaultdict(list)
 
     try:
         with open(filepath, "r", errors="replace") as f:
-            for line_num, line in enumerate(f, 1):
+            for line in f:
                 line = line.strip()
                 if not line:
                     continue
@@ -262,7 +246,6 @@ def process_session(filepath: str) -> dict:
                 if parent and uuid:
                     parent_chain[parent].append(uuid)
 
-                # Extract errors from tool_result blocks
                 msg = obj.get("message", {})
                 content = msg.get("content", [])
                 if isinstance(content, list):
@@ -290,7 +273,7 @@ def process_session(filepath: str) -> dict:
                                 "timestamp": obj.get("timestamp", ""),
                                 "session_id": obj.get("sessionId", ""),
                             })
-    except Exception as e:
+    except Exception:
         pass
 
     return {
@@ -314,7 +297,6 @@ def analyze_error_sequences(session_data: dict) -> list[dict]:
             results.append({**error, "post_action": "unknown"})
             continue
 
-        # Find the next assistant response
         children = parent_chain.get(error_uuid, [])
         next_tools = []
         next_has_text = False
@@ -347,9 +329,7 @@ def truncate_msg(text: str, max_len: int = 120) -> str:
     """Truncate and clean an error message for display."""
     text = text.replace("\n", " ").replace("\r", "")
     text = re.sub(r"\s+", " ", text).strip()
-    # Strip ANSI codes
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    # Strip XML tags
     text = re.sub(r"<[^>]+>", "", text)
     if len(text) > max_len:
         text = text[:max_len] + "..."
@@ -357,12 +337,46 @@ def truncate_msg(text: str, max_len: int = 120) -> str:
 
 
 def main():
-    projects_dir = str(CLAUDE_PROJECTS_DIR)
+    parser = argparse.ArgumentParser(
+        description="Analyze AI coding errors from Claude Code session files.",
+        epilog=(
+            "Examples:\n"
+            "  python3 analyze.py\n"
+            "  python3 analyze.py --sessions-dir ~/.claude/projects/\n"
+            "  python3 analyze.py --output my-report.md\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--sessions-dir",
+        default=str(Path.home() / ".claude" / "projects"),
+        help="Directory containing Claude Code session JSONL files (default: ~/.claude/projects/)",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="error-report.md",
+        help="Output file path for the markdown report (default: error-report.md)",
+    )
+    args = parser.parse_args()
+
+    projects_dir = args.sessions_dir
+    output_path = args.output
+
+    if not os.path.isdir(projects_dir):
+        print(f"Error: Sessions directory not found: {projects_dir}")
+        print(f"Make sure you have Claude Code sessions in ~/.claude/projects/")
+        print(f"Or specify a custom path with --sessions-dir")
+        raise SystemExit(1)
+
     jsonl_files = glob.glob(os.path.join(projects_dir, "**", "*.jsonl"), recursive=True)
 
-    print(f"Found {len(jsonl_files)} JSONL files to process...")
+    if not jsonl_files:
+        print(f"No .jsonl files found in {projects_dir}")
+        print(f"Claude Code stores sessions in ~/.claude/projects/<project-hash>/")
+        raise SystemExit(1)
 
-    # Process all sessions
+    print(f"Found {len(jsonl_files)} session files in {projects_dir}")
+
     all_errors = []
     all_sequences = []
     session_error_counts = defaultdict(lambda: defaultdict(int))
@@ -390,13 +404,14 @@ def main():
     print(f"Processed {files_processed} files, {files_with_errors} had errors.")
     print(f"Total errors found: {len(all_errors)}")
 
-    # ---------------------------------------------------------------------------
+    if not all_errors:
+        print("No errors found. Your AI is doing great (or you haven't used it much yet).")
+        raise SystemExit(0)
+
     # Aggregate stats
-    # ---------------------------------------------------------------------------
     category_counts = Counter(e["category"] for e in all_errors)
     total_errors = len(all_errors)
 
-    # Unique example messages per category
     category_examples = defaultdict(list)
     category_examples_seen = defaultdict(set)
     for error in all_errors:
@@ -406,25 +421,21 @@ def main():
             category_examples[cat].append(truncate_msg(error["text"], 200))
             category_examples_seen[cat].add(msg_key)
 
-    # Top sessions per category
     top_sessions_per_cat = {}
     for cat, sessions in session_error_counts.items():
         sorted_sessions = sorted(sessions.items(), key=lambda x: -x[1])[:3]
         top_sessions_per_cat[cat] = sorted_sessions
 
-    # Tool involved in errors
     tool_error_counts = Counter()
     for e in all_errors:
         if e.get("tool_name"):
             tool_error_counts[e["tool_name"]] += 1
 
-    # Post-error action stats
     post_action_counts = Counter(s.get("post_action", "unknown") for s in all_sequences)
     post_action_by_category = defaultdict(Counter)
     for s in all_sequences:
         post_action_by_category[s["category"]][s.get("post_action", "unknown")] += 1
 
-    # Preventability analysis
     prevention_counts = Counter()
     prevention_by_category = defaultdict(Counter)
     for e in all_errors:
@@ -433,12 +444,8 @@ def main():
             prevention_counts[p] += 1
             prevention_by_category[e["category"]][p] += 1
 
-    # ---------------------------------------------------------------------------
-    # Generate markdown report
-    # ---------------------------------------------------------------------------
-    output_path = str(_output_path("error_taxonomy"))
+    # Generate report
     lines = []
-
     def w(text=""):
         lines.append(text)
 
@@ -450,9 +457,6 @@ def main():
     w(f"**Total errors:** {total_errors}")
     w()
 
-    # ------------------------------------------------------------------
-    # 1. Category Overview
-    # ------------------------------------------------------------------
     w("## 1. Error Categories Overview")
     w()
     w("| Category | Count | % of Total | Description |")
@@ -482,12 +486,8 @@ def main():
         pct = (count / total_errors * 100) if total_errors > 0 else 0
         desc = descriptions.get(cat, "")
         w(f"| `{cat}` | {count} | {pct:.1f}% | {desc} |")
-
     w()
 
-    # ------------------------------------------------------------------
-    # 2. Per-Category Details
-    # ------------------------------------------------------------------
     w("## 2. Per-Category Details")
     w()
 
@@ -502,7 +502,6 @@ def main():
         w(f"**Count:** {count} ({pct:.1f}%)")
         w()
 
-        # Examples
         examples = category_examples.get(cat, [])
         if examples:
             w("**Example messages:**")
@@ -511,7 +510,6 @@ def main():
                 w(f"{i}. `{ex}`")
             w()
 
-        # Top sessions
         top = top_sessions_per_cat.get(cat, [])
         if top:
             w("**Sessions with most occurrences:**")
@@ -523,7 +521,6 @@ def main():
                 w(f"| `{short_id}` | {cnt} |")
             w()
 
-        # Post-error actions for this category
         actions = post_action_by_category.get(cat, {})
         if actions:
             w("**Post-error behavior:**")
@@ -536,9 +533,6 @@ def main():
                 w(f"| {action} | {cnt} | {act_pct:.1f}% |")
             w()
 
-    # ------------------------------------------------------------------
-    # 3. Error Sequences
-    # ------------------------------------------------------------------
     w("## 3. Error Sequences: What Happens After an Error?")
     w()
     w("Analysis of agent behavior immediately following an error.")
@@ -561,7 +555,6 @@ def main():
         w(f"| `{action}` | {cnt} | {pct:.1f}% | {desc} |")
     w()
 
-    # Retry analysis by tool
     w("### Retry Rates by Error Category")
     w()
     w("Which error types lead to retrying the same tool vs switching approach?")
@@ -579,9 +572,6 @@ def main():
         w(f"| `{cat}` | {retry} | {switch} | {ask} | {gave_up} |")
     w()
 
-    # ------------------------------------------------------------------
-    # 4. Tool Error Distribution
-    # ------------------------------------------------------------------
     w("## 4. Errors by Tool")
     w()
     w("Which tools produce the most errors?")
@@ -594,14 +584,10 @@ def main():
         w(f"| `{tool}` | {cnt} | {pct:.1f}% |")
     w()
 
-    # ------------------------------------------------------------------
-    # 5. Preventable Errors
-    # ------------------------------------------------------------------
     w("## 5. Preventable Errors")
     w()
     w("How many errors could have been avoided with different practices?")
     w()
-
     w("### Prevention Strategies")
     w()
     w("| Strategy | Errors Prevented | % of Total |")
@@ -611,7 +597,6 @@ def main():
         w(f"| {strategy} | {cnt} | {pct:.1f}% |")
     w()
 
-    # Count how many errors are preventable (not "Not easily preventable")
     preventable = sum(1 for e in all_errors if assess_preventability(e["category"], e["text"], e.get("tool_name")) != ["Not easily preventable"])
     not_preventable = total_errors - preventable
     w(f"**Total preventable errors:** {preventable} ({(preventable/total_errors*100) if total_errors else 0:.1f}%)")
@@ -634,20 +619,16 @@ def main():
         w(f"| `{cat}` | {count} | {strat_list} |")
     w()
 
-    # ------------------------------------------------------------------
-    # 6. Recommendations
-    # ------------------------------------------------------------------
     w("## 6. Key Findings and Recommendations")
     w()
 
-    # Sort categories by count for recommendations
     sorted_cats = sorted(category_counts.items(), key=lambda x: -x[1])
 
     w("### Top Error Sources")
     w()
     for i, (cat, cnt) in enumerate(sorted_cats[:5], 1):
         pct = (cnt / total_errors * 100) if total_errors > 0 else 0
-        w(f"{i}. **{cat}** -- {cnt} errors ({pct:.1f}%)")
+        w(f"{i}. **{cat}** - {cnt} errors ({pct:.1f}%)")
     w()
 
     w("### Actionable Recommendations")
@@ -657,13 +638,13 @@ def main():
     if category_counts.get("COMMAND_FAILED", 0) > 0:
         recommendations.append(
             "**Reduce COMMAND_FAILED errors:** Many bash command failures come from test suites "
-            "and missing dependencies. Add CLAUDE.md instructions to check command availability "
+            "and missing dependencies. Add instructions to check command availability "
             "before running, and use `which` or `command -v` to verify tools exist."
         )
     if category_counts.get("FILE_NOT_FOUND", 0) > 0:
         recommendations.append(
             "**Reduce FILE_NOT_FOUND errors:** Agent frequently tries to read files that do not exist. "
-            "Add CLAUDE.md instruction: 'Always use Glob or ls to verify file paths before reading.'"
+            "Add instruction: 'Always use Glob or ls to verify file paths before reading.'"
         )
     if category_counts.get("EDIT_FAILED", 0) > 0:
         recommendations.append(
@@ -674,18 +655,18 @@ def main():
     if category_counts.get("FILE_TOO_LARGE", 0) > 0:
         recommendations.append(
             "**Reduce FILE_TOO_LARGE errors:** Agent attempts to read very large files. "
-            "Add CLAUDE.md instruction: 'For files over 200KB, always use offset/limit or Grep instead of Read.'"
+            "Add instruction: 'For files over 200KB, always use offset/limit or Grep instead of Read.'"
         )
     if category_counts.get("HOOK_BLOCKED", 0) > 0:
         recommendations.append(
             "**Reduce HOOK_BLOCKED errors:** Custom hooks are blocking operations the agent attempts. "
-            "Review hook scripts and add clearer CLAUDE.md rules about restricted operations."
+            "Review hook scripts and add clearer rules about restricted operations."
         )
     if category_counts.get("USER_REJECTED", 0) > 0:
         recommendations.append(
             "**Reduce USER_REJECTED errors:** The agent proposes actions the user declines. "
             "This may indicate the agent should ask for confirmation earlier in its reasoning, "
-            "or CLAUDE.md constraints are not specific enough."
+            "or instructions are not specific enough."
         )
     if category_counts.get("SIBLING_ERROR", 0) > 0:
         recommendations.append(
@@ -696,14 +677,13 @@ def main():
         recommendations.append(
             "**Reduce FILE_NOT_READ errors:** Agent writes without reading first. "
             "This is already enforced by the tool, but the agent still attempts it. "
-            "Reinforce in CLAUDE.md: 'ALWAYS read a file before writing or editing it.'"
+            "Reinforce: 'ALWAYS read a file before writing or editing it.'"
         )
 
     for i, rec in enumerate(recommendations, 1):
         w(f"{i}. {rec}")
         w()
 
-    # Write output
     with open(output_path, "w") as f:
         f.write("\n".join(lines) + "\n")
 

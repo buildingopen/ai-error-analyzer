@@ -1,3 +1,6 @@
+> **This is example output** from running `python3 analyze.py` on 2,068 real Claude Code sessions.
+> Run it yourself to get a report tailored to your own error patterns.
+
 # Error Taxonomy Report
 
 **Generated:** 2026-03-09 15:50

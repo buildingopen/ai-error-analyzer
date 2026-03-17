@@ -1,0 +1,4 @@
+error-report.md
+__pycache__/
+*.pyc
+.DS_Store
