@@ -1,6 +1,6 @@
 # AI Error Analyzer
 
-**6 copy-paste rules that reduce wasted AI retries by 34%.** Based on 5,890 real errors across 2,068 Claude Code sessions.
+**6 copy-paste rules that improve AI error recovery by 34%.** Based on 5,890 real errors across 2,068 Claude Code sessions.
 
 ## The Problem
 
@@ -43,7 +43,7 @@ Or just copy the 6 rules above into your `CLAUDE.md`.
 
 ## Results
 
-Measured across the same codebase, before and after adding these rules:
+Measured before and after adding these rules to the same project:
 
 | Metric | Before | After | Change |
 |--------|--------|-------|--------|
@@ -104,7 +104,7 @@ python3 analyze.py --output my-report.md               # Custom output file
 | Worst retry loop: same file read consecutively | 18 times |
 | Worst session: tokens wasted on retries | 5.3M |
 
-Full analysis methodology: [buildingopen/transcript-analyzer](https://github.com/buildingopen/transcript-analyzer)
+Methodology: analyzed every `.jsonl` session file in `~/.claude/projects/` using the included `analyze.py` script.
 
 ## License
 
