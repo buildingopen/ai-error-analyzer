@@ -1,6 +1,6 @@
 # AI Error Recovery Rules
 
-**6 rules that took my AI's error recovery rate from 16% to 67%.**
+**6 rules based on 5,890 real AI coding errors. They help. They're not enough.**
 
 Based on 5,890 real errors across 2,068 coding sessions. [Full analysis](https://github.com/buildingopen/transcript-analyzer).
 
@@ -40,13 +40,15 @@ Copy these into your AI's instruction file.
 
 ## Results
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Error recovery rate | 16% | 67% |
-| Futile retries | 49% | ~12% |
-| Cascade failures | 23% | ~8% |
+| Metric | Before Rules | After Rules |
+|--------|-------------|-------------|
+| Error recovery rate | 15.9% | 21.4% |
+| Futile retries | 50.7% | 43.2% |
+| Hook errors | 105 | 0 |
+| File-too-large recovery | 7.1% | 32.1% |
+| Network error recovery | 15.1% | 34.4% |
 
-Same AI. Same tasks. Six sentences.
+Some categories improved dramatically. Overall recovery improved 34% relative. But the AI still retries 43% of the time. Instruction-level rules can't fully rewire model behavior.
 
 ## The Data
 
